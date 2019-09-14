@@ -769,7 +769,7 @@ impl Rocket {
     /// let runtime = tokio::runtime::Runtime::new().expect("error creating runtime");
     ///
     /// # if false {
-    /// let server_done = rocket::ignite().spawn_on(&runtime).expect("error launching server");
+    /// let server_done = rocket::ignite().spawn_on(&runtime);
     /// runtime.block_on(async move {
     ///     let result = server_done.await;
     ///     assert!(result.is_ok());
@@ -901,19 +901,17 @@ impl Rocket {
     /// #
     /// let rocket = rocket::ignite();
     /// let handle = rocket.get_shutdown_handle();
-    /// # let real_handle = rocket.get_shutdown_handle();
     ///
     /// # if false {
     /// thread::spawn(move || {
     ///     thread::sleep(Duration::from_secs(10));
     ///     handle.shutdown();
     /// });
-    /// # }
-    /// # real_handle.shutdown();
     ///
     /// // Shuts down after 10 seconds
     /// let shutdown_result = rocket.launch();
     /// assert!(shutdown_result.is_ok());
+    /// # }
     /// ```
     #[inline(always)]
     pub fn get_shutdown_handle(&self) -> ShutdownHandle {
