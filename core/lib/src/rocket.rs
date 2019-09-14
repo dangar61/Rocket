@@ -3,20 +3,16 @@ use std::convert::{From, TryInto};
 use std::cmp::min;
 use std::io;
 use std::mem;
-use std::net::ToSocketAddrs;
 use std::sync::Arc;
-use std::time::Duration;
 
 use futures::future::{Future, FutureExt, BoxFuture};
 use futures::channel::{mpsc, oneshot};
 use futures::stream::StreamExt;
-use futures::task::SpawnExt;
+use futures::task::{Spawn, SpawnExt};
 use futures_tokio_compat::Compat as TokioCompat;
 
 use yansi::Paint;
 use state::Container;
-
-#[cfg(feature = "tls")] use crate::http::tls::TlsAcceptor;
 
 use crate::{logger, handler};
 use crate::config::{self, Config, LoggedValue};
@@ -32,6 +28,7 @@ use crate::ext::AsyncReadExt;
 use crate::shutdown::{ShutdownHandle, ShutdownHandleManaged};
 
 use crate::http::{Method, Status, Header};
+use crate::http::private::{Listener, Connection, Incoming};
 use crate::http::hyper::{self, header};
 use crate::http::uri::Origin;
 
@@ -689,6 +686,74 @@ impl Rocket {
         Ok(self)
     }
 
+    // TODO.async: Solidify the Listener APIs and make this function public
+    async fn listen_on<L, S>(mut self, listener: L, spawn: S) -> Result<(), crate::error::Error>
+    where
+        L: Listener + Send + Unpin + 'static,
+        <L as Listener>::Connection: Send + Unpin + 'static,
+        S: Spawn + Clone + Send + 'static,
+    {
+        self = self.prelaunch_check().map_err(crate::error::Error::Launch)?;
+
+        self.fairings.pretty_print_counts();
+
+        // Determine the address and port we actually binded to.
+        self.config.port = listener.local_addr().map(|a| a.port()).unwrap_or(0);
+
+        let proto = if self.config.tls.is_some() {
+            "https://"
+        } else {
+            "http://"
+        };
+
+        let full_addr = format!("{}:{}", self.config.address, self.config.port);
+
+        // Set the keep-alive.
+        // TODO.async: implement keep-alive in Listener
+        // let timeout = self.config.keep_alive.map(|s| Duration::from_secs(s as u64));
+        // listener.set_keepalive(timeout);
+
+        // Freeze managed state for synchronization-free accesses later.
+        self.state.freeze();
+
+        // Run the launch fairings.
+        self.fairings.handle_launch(&self);
+
+        launch_info!("{}{} {}{}",
+                     Paint::masked("🚀 "),
+                     Paint::default("Rocket has launched from").bold(),
+                     Paint::default(proto).bold().underline(),
+                     Paint::default(&full_addr).bold().underline());
+
+        // Restore the log level back to what it originally was.
+        logger::pop_max_level();
+
+        // We need to get this before moving `self` into an `Arc`.
+        let mut shutdown_receiver = self.shutdown_receiver
+            .take().expect("shutdown receiver has already been used");
+
+        let rocket = Arc::new(self);
+        let spawn_makeservice = spawn.clone();
+        let service = hyper::make_service_fn(move |connection: &<L as Listener>::Connection| {
+            let rocket = rocket.clone();
+            let remote_addr = connection.remote_addr().unwrap_or_else(|| "0.0.0.0".parse().unwrap());
+            let spawn_service = spawn_makeservice.clone();
+            async move {
+                Ok::<_, std::convert::Infallible>(hyper::service_fn(move |req| {
+                    hyper_service_fn(rocket.clone(), remote_addr, spawn_service.clone(), req)
+                }))
+            }
+        });
+
+        // NB: executor must be passed manually here, see hyperium/hyper#1537
+        hyper::Server::builder(Incoming::from_listener(listener))
+            .executor(TokioCompat::new(spawn))
+            .serve(service)
+            .with_graceful_shutdown(async move { shutdown_receiver.next().await; })
+            .await
+            .map_err(crate::error::Error::Run)
+    }
+
     /// Similar to `launch()`, but using a custom Tokio runtime and returning
     /// a `Future` that completes along with the server. The runtime has no
     /// restrictions other than being Tokio-based, and can have other tasks
@@ -712,89 +777,59 @@ impl Rocket {
     /// # }
     /// ```
     pub fn spawn_on(
-        mut self,
+        self,
         runtime: &tokio::runtime::Runtime,
-    ) -> Result<impl Future<Output = Result<(), hyper::Error>>, LaunchError> {
-        #[cfg(feature = "tls")] use crate::http::tls;
+    ) -> impl Future<Output = Result<(), crate::error::Error>> {
+        use std::net::ToSocketAddrs;
 
-        self = self.prelaunch_check()?;
-
-        self.fairings.pretty_print_counts();
+        use crate::error::Error::Launch;
 
         let full_addr = format!("{}:{}", self.config.address, self.config.port);
         let addrs = match full_addr.to_socket_addrs() {
             Ok(a) => a.collect::<Vec<_>>(),
-            // TODO.async: Reconsider this error type
-            Err(e) => return Err(From::from(io::Error::new(io::ErrorKind::Other, e))),
+            Err(e) => return futures::future::err(Launch(From::from(e))).boxed(),
         };
-
-        // TODO.async: support for TLS, unix sockets.
-        // Likely will be implemented with a custom "Incoming" type.
-
-        let mut incoming = match hyper::AddrIncoming::bind(&addrs[0]) {
-            Ok(incoming) => incoming,
-            Err(e) => return Err(LaunchError::new(LaunchErrorKind::Bind(e))),
-        };
-
-        // Determine the address and port we actually binded to.
-        self.config.port = incoming.local_addr().port();
-
-        let proto = "http://";
-
-        // Set the keep-alive.
-        let timeout = self.config.keep_alive.map(|s| Duration::from_secs(s as u64));
-        incoming.set_keepalive(timeout);
-
-        // Freeze managed state for synchronization-free accesses later.
-        self.state.freeze();
-
-        // Run the launch fairings.
-        self.fairings.handle_launch(&self);
-
-        launch_info!("{}{} {}{}",
-                     Paint::masked("🚀 "),
-                     Paint::default("Rocket has launched from").bold(),
-                     Paint::default(proto).bold().underline(),
-                     Paint::default(&full_addr).bold().underline());
-
-        // Restore the log level back to what it originally was.
-        logger::pop_max_level();
-
-        // We need to get these values before moving `self` into an `Arc`.
-        let mut shutdown_receiver = self.shutdown_receiver
-            .take().expect("shutdown receiver has already been used");
+        let addr = addrs[0];
+        let spawn = TokioCompat::new(runtime.executor());
 
         #[cfg(feature = "ctrl_c_shutdown")]
-        let shutdown_handle = self.get_shutdown_handle();
+        let (
+            shutdown_handle,
+            (cancel_ctrl_c_listener_sender, cancel_ctrl_c_listener_receiver)
+        ) = (
+            self.get_shutdown_handle(),
+            oneshot::channel()
+        );
 
-        let rocket = Arc::new(self);
-        let spawn = Box::new(TokioCompat::new(runtime.executor()));
-        let service = hyper::make_service_fn(move |socket: &hyper::AddrStream| {
-            let rocket = rocket.clone();
-            let remote_addr = socket.remote_addr();
-            let spawn = spawn.clone();
-            async move {
-                Ok::<_, std::convert::Infallible>(hyper::service_fn(move |req| {
-                    hyper_service_fn(rocket.clone(), remote_addr, spawn.clone(), req)
-                }))
+        let server = async move {
+            macro_rules! listen_on {
+                ($spawn:expr, $expr:expr) => {{
+                    let listener = match $expr {
+                        Ok(ok) => ok,
+                        Err(err) => return Err(Launch(LaunchError::new(LaunchErrorKind::Bind(err)))),
+                    };
+                    self.listen_on(listener, spawn).await
+                }};
             }
-        });
+
+            #[cfg(feature = "tls")]
+            {
+                if let Some(tls) = self.config.tls.clone() {
+                    listen_on!(spawn, crate::http::tls::bind_tls(addr, tls.certs, tls.key).await)
+                } else {
+                    listen_on!(spawn, crate::http::private::bind_tcp(addr).await)
+                }
+            }
+            #[cfg(not(feature = "tls"))]
+            {
+                listen_on!(spawn, crate::http::private::bind_tcp(addr).await)
+            }
+        };
 
         #[cfg(feature = "ctrl_c_shutdown")]
-        let (cancel_ctrl_c_listener_sender, cancel_ctrl_c_listener_receiver) = oneshot::channel();
-
-        // NB: executor must be passed manually here, see hyperium/hyper#1537
-        let (future, handle) = hyper::Server::builder(incoming)
-            .executor(runtime.executor())
-            .serve(service)
-            .with_graceful_shutdown(async move { shutdown_receiver.next().await; })
-            .inspect(|_| {
-                #[cfg(feature = "ctrl_c_shutdown")]
-                let _ = cancel_ctrl_c_listener_sender.send(());
-            })
-            .remote_handle();
-
-        runtime.spawn(future);
+        let server = server.inspect(|_| {
+            let _ = cancel_ctrl_c_listener_sender.send(());
+        });
 
         #[cfg(feature = "ctrl_c_shutdown")]
         match tokio::net::signal::ctrl_c() {
@@ -821,7 +856,7 @@ impl Rocket {
             },
         }
 
-        Ok(handle)
+        server.boxed()
     }
 
     /// Starts the application server and begins listening for and dispatching
@@ -844,8 +879,6 @@ impl Rocket {
     /// # }
     /// ```
     pub fn launch(self) -> Result<(), crate::error::Error> {
-        use crate::error::Error;
-
         // TODO.async What meaning should config.workers have now?
         // Initialize the tokio runtime
         let runtime = tokio::runtime::Builder::new()
@@ -853,10 +886,7 @@ impl Rocket {
             .build()
             .expect("Cannot build runtime!");
 
-        match self.spawn_on(&runtime) {
-            Ok(fut) => runtime.block_on(fut).map_err(Error::Run),
-            Err(err) => Err(Error::Launch(err)),
-        }
+        runtime.block_on(self.spawn_on(&runtime))
     }
 
     /// Returns a [`ShutdownHandle`], which can be used to gracefully terminate

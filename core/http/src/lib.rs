@@ -38,6 +38,7 @@ mod status;
 mod header;
 mod accept;
 mod raw_str;
+mod listener;
 
 crate mod parse;
 
@@ -54,6 +55,7 @@ pub mod private {
 
     // This one we need to expose for core.
     pub use crate::cookies::{Key, CookieJar};
+    pub use crate::listener::{Incoming, Listener, Connection, bind_tcp};
 }
 
 pub use crate::method::Method;
