@@ -29,11 +29,11 @@ use crate::http::uri::Origin;
 /// The main `Rocket` type: used to mount routes and catchers and launch the
 /// application.
 pub struct Rocket {
-    crate config: Config,
+    pub(crate) config: Config,
     router: Router,
     default_catchers: HashMap<u16, Catcher>,
     catchers: HashMap<u16, Catcher>,
-    crate state: Container,
+    pub(crate) state: Container,
     fairings: Fairings,
 }
 
@@ -197,7 +197,7 @@ impl Rocket {
     }
 
     #[inline]
-    crate fn dispatch<'s, 'r>(
+    pub(crate) fn dispatch<'s, 'r>(
         &'s self,
         request: &'r mut Request<'s>,
         data: Data
@@ -239,15 +239,8 @@ impl Rocket {
         request: &'r Request<'s>,
         data: Data
     ) -> Response<'r> {
-        match self.route(request, data) {
-            Outcome::Success(mut response) => {
-                // A user's route responded! Set the cookies.
-                for cookie in request.cookies().delta() {
-                    response.adjoin_header(cookie);
-                }
-
-                response
-            }
+        let mut response = match self.route(request, data) {
+            Outcome::Success(response) => response,
             Outcome::Forward(data) => {
                 // There was no matching route. Autohandle `HEAD` requests.
                 if request.method() == Method::Head {
@@ -255,14 +248,24 @@ impl Rocket {
 
                     // Dispatch the request again with Method `GET`.
                     request._set_method(Method::Get);
-                    self.route_and_process(request, data)
+
+                    // Return early so we don't set cookies twice.
+                    return self.route_and_process(request, data);
                 } else {
                     // No match was found and it can't be autohandled. 404.
                     self.handle_error(Status::NotFound, request)
                 }
             }
-            Outcome::Failure(status) => self.handle_error(status, request)
+            Outcome::Failure(status) => self.handle_error(status, request),
+        };
+
+        // Set the cookies. Note that error responses will only include cookies
+        // set by the error handler. See `handle_error` for more.
+        for cookie in request.cookies().delta() {
+            response.adjoin_header(cookie);
         }
+
+        response
     }
 
     /// Tries to find a `Responder` for a given `request`. It does this by
@@ -277,7 +280,7 @@ impl Rocket {
     // (ensuring `handler` takes an immutable borrow), any caller to `route`
     // should be able to supply an `&mut` and retain an `&` after the call.
     #[inline]
-    crate fn route<'s, 'r>(
+    pub(crate) fn route<'s, 'r>(
         &'s self,
         request: &'r Request<'s>,
         mut data: Data,
@@ -306,16 +309,22 @@ impl Rocket {
     }
 
     // Finds the error catcher for the status `status` and executes it for the
-    // given request `req`. If a user has registered a catcher for `status`, the
-    // catcher is called. If the catcher fails to return a good response, the
-    // 500 catcher is executed. If there is no registered catcher for `status`,
-    // the default catcher is used.
-    crate fn handle_error<'r>(
+    // given request `req`; the cookies in `req` are reset to their original
+    // state before invoking the error handler. If a user has registered a
+    // catcher for `status`, the catcher is called. If the catcher fails to
+    // return a good response, the 500 catcher is executed. If there is no
+    // registered catcher for `status`, the default catcher is used.
+    pub(crate) fn handle_error<'r>(
         &self,
         status: Status,
         req: &'r Request<'_>
     ) -> Response<'r> {
         warn_!("Responding with {} catcher.", Paint::red(&status));
+
+        // For now, we reset the delta state to prevent any modifications from
+        // earlier, unsuccessful paths from being reflected in error response.
+        // We may wish to relax this in the future.
+        req.cookies().reset_delta();
 
         // Try to get the active catcher but fallback to user's 500 catcher.
         let catcher = self.catchers.get(&status.code).unwrap_or_else(|| {
@@ -648,7 +657,7 @@ impl Rocket {
         self
     }
 
-    crate fn prelaunch_check(mut self) -> Result<Rocket, LaunchError> {
+    pub(crate) fn prelaunch_check(mut self) -> Result<Rocket, LaunchError> {
         self.router = match self.router.collisions() {
             Ok(router) => router,
             Err(e) => return Err(LaunchError::new(LaunchErrorKind::Collision(e)))

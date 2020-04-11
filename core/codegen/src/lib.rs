@@ -1,5 +1,4 @@
 #![feature(proc_macro_diagnostic, proc_macro_span)]
-#![feature(crate_visibility_modifier)]
 #![recursion_limit="128"]
 
 #![doc(html_root_url = "https://api.rocket.rs/v0.5")]
@@ -97,6 +96,12 @@ vars_and_mods! {
     Data => rocket::Data,
     StaticRouteInfo => rocket::StaticRouteInfo,
     SmallVec => rocket::http::private::SmallVec,
+    _Option => ::std::option::Option,
+    _Result => ::std::result::Result,
+    _Some => ::std::option::Option::Some,
+    _None => ::std::option::Option::None,
+    _Ok => ::std::result::Result::Ok,
+    _Err => ::std::result::Result::Err,
 }
 
 macro_rules! define_vars_and_mods {
@@ -114,14 +119,14 @@ mod syn_ext;
 
 use crate::http::Method;
 use proc_macro::TokenStream;
-crate use devise::proc_macro2;
+use devise::proc_macro2;
 
-crate static ROUTE_STRUCT_PREFIX: &str = "static_rocket_route_info_for_";
-crate static CATCH_STRUCT_PREFIX: &str = "static_rocket_catch_info_for_";
-crate static CATCH_FN_PREFIX: &str = "rocket_catch_fn_";
-crate static ROUTE_FN_PREFIX: &str = "rocket_route_fn_";
-crate static URI_MACRO_PREFIX: &str = "rocket_uri_macro_";
-crate static ROCKET_PARAM_PREFIX: &str = "__rocket_param_";
+static ROUTE_STRUCT_PREFIX: &str = "static_rocket_route_info_for_";
+static CATCH_STRUCT_PREFIX: &str = "static_rocket_catch_info_for_";
+static CATCH_FN_PREFIX: &str = "rocket_catch_fn_";
+static ROUTE_FN_PREFIX: &str = "rocket_route_fn_";
+static URI_MACRO_PREFIX: &str = "rocket_uri_macro_";
+static ROCKET_PARAM_PREFIX: &str = "__rocket_param_";
 
 macro_rules! emit {
     ($tokens:expr) => ({
@@ -156,16 +161,16 @@ macro_rules! route_attribute {
         ///
         /// There are 7 method-specific route attributes:
         ///
-        ///   * [`#[get]`] - `GET` specific route
-        ///   * [`#[put]`] - `PUT` specific route
-        ///   * [`#[post]`] - `POST` specific route
-        ///   * [`#[delete]`] - `DELETE` specific route
-        ///   * [`#[head]`] - `HEAD` specific route
-        ///   * [`#[options]`] - `OPTIONS` specific route
-        ///   * [`#[patch]`] - `PATCH` specific route
+        ///   * [`get`] - `GET` specific route
+        ///   * [`put`] - `PUT` specific route
+        ///   * [`post`] - `POST` specific route
+        ///   * [`delete`] - `DELETE` specific route
+        ///   * [`head`] - `HEAD` specific route
+        ///   * [`options`] - `OPTIONS` specific route
+        ///   * [`patch`] - `PATCH` specific route
         ///
-        /// Additionally, [`#[route]`] allows the method and path to be
-        /// explicitly specified:
+        /// Additionally, [`route`] allows the method and path to be explicitly
+        /// specified:
         ///
         /// ```rust
         /// # #![feature(proc_macro_hygiene)]
@@ -177,14 +182,14 @@ macro_rules! route_attribute {
         /// }
         /// ```
         ///
-        /// [`#[delete]`]: attr.delete.html
-        /// [`#[get]`]: attr.get.html
-        /// [`#[head]`]: attr.head.html
-        /// [`#[options]`]: attr.options.html
-        /// [`#[patch]`]: attr.patch.html
-        /// [`#[post]`]: attr.post.html
-        /// [`#[put]`]: attr.put.html
-        /// [`#[route]`]: attr.route.html
+        /// [`get`]: attr.get.html
+        /// [`put`]: attr.put.html
+        /// [`post`]: attr.post.html
+        /// [`delete`]: attr.delete.html
+        /// [`head`]: attr.head.html
+        /// [`options`]: attr.options.html
+        /// [`patch`]: attr.patch.html
+        /// [`route`]: attr.route.html
         ///
         /// # Grammar
         ///
@@ -262,7 +267,7 @@ macro_rules! route_attribute {
         ///
         /// [`FromParam`]: ../rocket/request/trait.FromParam.html
         /// [`FromSegments`]: ../rocket/request/trait.FromSegments.html
-        /// [`FromFormValue`]: ../rocket/request/form/trait.FromFormValue.html
+        /// [`FromFormValue`]: ../rocket/request/trait.FromFormValue.html
         /// [`FromQuery`]: ../rocket/request/trait.FromQuery.html
         /// [`FromData`]: ../rocket/data/trait.FromData.html
         /// [`FromRequest`]: ../rocket/request/trait.FromRequest.html
@@ -984,4 +989,10 @@ pub fn uri(input: TokenStream) -> TokenStream {
 #[proc_macro]
 pub fn rocket_internal_uri(input: TokenStream) -> TokenStream {
     emit!(bang::uri_internal_macro(input))
+}
+
+#[doc(hidden)]
+#[proc_macro]
+pub fn rocket_internal_guide_tests(input: TokenStream) -> TokenStream {
+    emit!(bang::guide_tests_internal(input))
 }

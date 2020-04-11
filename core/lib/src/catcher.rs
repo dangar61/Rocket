@@ -64,7 +64,7 @@ pub struct Catcher {
     pub code: u16,
     /// The catcher's associated handler.
     pub handler: ErrorHandler,
-    crate is_default: bool,
+    pub(crate) is_default: bool,
 }
 
 impl Catcher {
@@ -98,7 +98,7 @@ impl Catcher {
     }
 
     #[inline(always)]
-    crate fn handle<'r>(&self, req: &'r Request<'_>) -> response::Result<'r> {
+    pub(crate) fn handle<'r>(&self, req: &'r Request<'_>) -> response::Result<'r> {
         (self.handler)(req)
     }
 
@@ -125,16 +125,18 @@ macro_rules! error_page_template {
     ($code:expr, $name:expr, $description:expr) => (
         concat!(r#"
             <!DOCTYPE html>
-            <html>
+            <html lang="en">
             <head>
                 <meta charset="utf-8">
                 <title>"#, $code, " ", $name, r#"</title>
             </head>
             <body align="center">
-                <div align="center">
+                <div role="main" align="center">
                     <h1>"#, $code, ": ", $name, r#"</h1>
                     <p>"#, $description, r#"</p>
                     <hr />
+                </div>
+                <div role="contentinfo" align="center">
                     <small>Rocket</small>
                 </div>
             </body>

@@ -1,6 +1,6 @@
 //! UUID parameter and form value parsing support.
 //!
-//! See the [`Uuid`](uuid::Uuid) type for further details.
+//! See the [`Uuid`] type for further details.
 //!
 //! # Enabling
 //!
@@ -23,7 +23,7 @@ use std::ops::Deref;
 use rocket::request::{FromParam, FromFormValue};
 use rocket::http::RawStr;
 
-pub use self::uuid_crate::parser::ParseError;
+type ParseError = <self::uuid_crate::Uuid as FromStr>::Err;
 
 /// Implements [`FromParam`] and [`FromFormValue`] for accepting UUID values.
 ///

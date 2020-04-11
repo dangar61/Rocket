@@ -1,5 +1,6 @@
 // normalize-stderr-test: "<(.*) as (.*)>" -> "$1 as $$TRAIT"
 // normalize-stderr-test: "and \d+ others" -> "and $$N others"
+// normalize-stderr-test: "::: (.*)/core/http" -> "::: $$ROCKET/core/http"
 
 #![feature(proc_macro_hygiene)]
 
@@ -39,6 +40,8 @@ fn simple_q(id: isize) {  }
 
 #[post("/?<id>&<rest..>")]
 fn other_q(id: usize, rest: S) {  }
+//~^ ERROR S: rocket::http::uri::Ignorable<rocket::http::uri::Query>
+//~^^ ERROR usize: rocket::http::uri::Ignorable<rocket::http::uri::Query>
 
 #[post("/?<id>&<name>")]
 fn optionals_q(id: Option<i32>, name: Result<String, &RawStr>) {  }
@@ -76,11 +79,9 @@ fn main() {
     //~^ ERROR S: rocket::http::uri::FromUriParam<rocket::http::uri::Query, _>
 
     uri!(other_q: rest = _, id = 100);
-    //~^ ERROR S: rocket::http::uri::Ignorable<rocket::http::uri::Query>
 
     uri!(other_q: rest = S, id = _);
     //~^ ERROR S: rocket::http::uri::FromUriParam<rocket::http::uri::Query, _>
-    //~^^ ERROR usize: rocket::http::uri::Ignorable<rocket::http::uri::Query>
 
     // These are all okay.
     uri!(optionals_q: _, _);

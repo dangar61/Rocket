@@ -2,13 +2,13 @@ use proc_macro::{Span, TokenStream};
 use devise::{*, ext::{TypeExt, Split3}};
 
 #[derive(FromMeta)]
-crate struct Form {
-    crate field: FormField,
+pub struct Form {
+    pub field: FormField,
 }
 
-crate struct FormField {
-    crate span: Span,
-    crate name: String
+pub struct FormField {
+    pub span: Span,
+    pub name: String
 }
 
 fn is_valid_field_name(s: &str) -> bool {
@@ -82,6 +82,7 @@ pub fn derive_from_form(input: TokenStream) -> TokenStream {
             }
         })
         .try_map_fields(move |_, fields| {
+            define_vars_and_mods!(_None, _Some, _Ok, _Err);
             let (constructors, matchers, builders) = fields.iter().map(|field| {
                 let (ident, span) = (&field.ident, field.span().into());
                 let default_name = ident.as_ref().expect("named").to_string();
@@ -94,10 +95,10 @@ pub fn derive_from_form(input: TokenStream) -> TokenStream {
                     span => <#ty as ::rocket::request::FromFormValue>
                 };
 
-                let constructor = quote_spanned!(span => let mut #ident = None;);
+                let constructor = quote_spanned!(span => let mut #ident = #_None;);
 
                 let matcher = quote_spanned! { span =>
-                    #name => { #ident = Some(#ty::from_form_value(__v)
+                    #name => { #ident = #_Some(#ty::from_form_value(__v)
                                 .map_err(|_| #form_error::BadValue(__k, __v))?); },
                 };
 
@@ -116,13 +117,13 @@ pub fn derive_from_form(input: TokenStream) -> TokenStream {
                     match __k.as_str() {
                         #(#matchers)*
                         _ if __strict && __k != "_method" => {
-                            return Err(#form_error::Unknown(__k, __v));
+                            return #_Err(#form_error::Unknown(__k, __v));
                         }
                         _ => { /* lenient or "method"; let it pass */ }
                     }
                 }
 
-                Ok(Self { #(#builders)* })
+                #_Ok(Self { #(#builders)* })
             })
         })
         .to_tokens()

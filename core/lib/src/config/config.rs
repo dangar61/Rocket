@@ -10,7 +10,6 @@ use crate::config::{Table, Value, Array, Datetime};
 use crate::http::private::Key;
 
 use super::custom_values::*;
-use {num_cpus, base64};
 
 /// Structure for Rocket application configuration.
 ///
@@ -49,17 +48,17 @@ pub struct Config {
     /// How much information to log.
     pub log_level: LoggingLevel,
     /// The secret key.
-    crate secret_key: SecretKey,
+    pub(crate) secret_key: SecretKey,
     /// TLS configuration.
-    crate tls: Option<TlsConfig>,
+    pub(crate) tls: Option<TlsConfig>,
     /// Streaming read size limits.
     pub limits: Limits,
     /// Extra parameters that aren't part of Rocket's core config.
     pub extras: HashMap<String, Value>,
     /// The path to the configuration file this config was loaded from, if any.
-    crate config_file_path: Option<PathBuf>,
+    pub(crate) config_file_path: Option<PathBuf>,
     /// The path root-relative files will be rooted from.
-    crate root_path: Option<PathBuf>,
+    pub(crate) root_path: Option<PathBuf>,
 }
 
 macro_rules! config_from_raw {
@@ -192,7 +191,7 @@ impl Config {
     /// # Panics
     ///
     /// Panics if randomness cannot be retrieved from the OS.
-    crate fn default_from<P>(env: Environment, path: P) -> Result<Config>
+    pub(crate) fn default_from<P>(env: Environment, path: P) -> Result<Config>
         where P: AsRef<Path>
     {
         let mut config = Config::default(env);
@@ -214,7 +213,7 @@ impl Config {
     /// # Panics
     ///
     /// Panics if randomness cannot be retrieved from the OS.
-    crate fn default(env: Environment) -> Config {
+    pub(crate) fn default(env: Environment) -> Config {
         // Note: This may truncate if num_cpus::get() / 2 > u16::max. That's okay.
         let default_workers = (num_cpus::get() * 2) as u16;
 
@@ -276,7 +275,7 @@ impl Config {
     /// Constructs a `BadType` error given the entry `name`, the invalid `val`
     /// at that entry, and the `expect`ed type name.
     #[inline(always)]
-    crate fn bad_type(&self,
+    pub(crate) fn bad_type(&self,
                            name: &str,
                            actual: &'static str,
                            expect: &'static str) -> ConfigError {
@@ -298,9 +297,9 @@ impl Config {
     ///   * **workers**: Integer (16-bit unsigned)
     ///   * **keep_alive**: Integer
     ///   * **log**: String
-    ///   * **secret_key**: String (256-bit base64)
+    ///   * **secret_key**: String (256-bit base64 or base16)
     ///   * **tls**: Table (`certs` (path as String), `key` (path as String))
-    crate fn set_raw(&mut self, name: &str, val: &Value) -> Result<()> {
+    pub(crate) fn set_raw(&mut self, name: &str, val: &Value) -> Result<()> {
         let (id, ok) = (|val| val, |_| Ok(()));
         config_from_raw!(self, name, val,
             address => (str, set_address, id),
@@ -423,12 +422,12 @@ impl Config {
     }
 
     /// Sets the `secret_key` in `self` to `key` which must be a 256-bit base64
-    /// encoded string.
+    /// or base16 (hex) encoded string.
     ///
     /// # Errors
     ///
-    /// If `key` is not a valid 256-bit base64 encoded string, returns a
-    /// `BadType` error.
+    /// If `key` is not a valid 256-bit encoded string, returns a `BadType`
+    /// error.
     ///
     /// # Example
     ///
@@ -436,22 +435,28 @@ impl Config {
     /// use rocket::config::{Config, Environment};
     ///
     /// let mut config = Config::new(Environment::Staging);
+    ///
+    /// // A base64 encoded key.
     /// let key = "8Xui8SN4mI+7egV/9dlfYYLGQJeEx4+DwmSQLwDVXJg=";
     /// assert!(config.set_secret_key(key).is_ok());
+    ///
+    /// // A base16 (hex) encoded key.
+    /// let key = "fe4c5b09a9ac372156e44ce133bc940685ef5e0394d6e9274aadacc21e4f2643";
+    /// assert!(config.set_secret_key(key).is_ok());
+    ///
+    /// // An invalid key.
     /// assert!(config.set_secret_key("hello? anyone there?").is_err());
     /// ```
     pub fn set_secret_key<K: Into<String>>(&mut self, key: K) -> Result<()> {
         let key = key.into();
-        let error = self.bad_type("secret_key", "string",
-                                  "a 256-bit base64 encoded string");
+        let e = self.bad_type("secret_key", "string", "a 256-bit base64 or hex encoded string");
 
-        if key.len() != 44 {
-            return Err(error);
-        }
-
-        let bytes = match base64::decode(&key) {
-            Ok(bytes) => bytes,
-            Err(_) => return Err(error)
+        // `binascii` requires a bit more space than actual output for padding
+        let mut bytes = [0u8; 36];
+        let bytes = match key.len() {
+            44 => binascii::b64decode(key.as_bytes(), &mut bytes).map_err(|_| e)?,
+            64 => binascii::hex2bin(key.as_bytes(), &mut bytes).map_err(|_| e)?,
+            _ => return Err(e)
         };
 
         self.secret_key = SecretKey::Provided(Key::from_master(&bytes));
@@ -616,7 +621,7 @@ impl Config {
 
     /// Retrieves the secret key from `self`.
     #[inline]
-    crate fn secret_key(&self) -> &Key {
+    pub(crate) fn secret_key(&self) -> &Key {
         self.secret_key.inner()
     }
 

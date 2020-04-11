@@ -16,9 +16,12 @@
 //!
 //! # Contrib
 //!
-//! The [`contrib` crate](rocket_contrib) contains several useful `Responder`s
-//! including [`Template`](rocket_contrib::Template) and
-//! [`Json`](rocket_contrib::Json).
+//! The [`contrib` crate] contains several useful `Responder`s including
+//! [`Template`] and [`Json`].
+//!
+//! [`contrib` crate]: ../../rocket_contrib
+//! [`Template`]: ../../rocket_contrib/templates/struct.Template.html
+//! [`Json`]: ../../rocket_contrib/json/struct.Json.html
 
 mod responder;
 mod redirect;
@@ -27,7 +30,7 @@ mod stream;
 mod response;
 mod debug;
 
-crate mod flash;
+pub(crate) mod flash;
 
 pub mod content;
 pub mod status;
